@@ -18,7 +18,7 @@ from transactions.forms import (
     TransferForm,
 )
 from transactions.models import Transaction
-total_balance = 0
+total_balance = 1000000
 def send_transaction_email(user, amount, subject, template):
     message = render_to_string(template, {
         'user': user,
@@ -76,27 +76,22 @@ class DepositMoneyView(TransactionCreateMixin):
 class WithdrawMoneyView(TransactionCreateMixin):
     form_class = WithdrawForm
     title = 'Withdraw Money'
-
     def get_initial(self):
         initial = {'transaction_type': WITHDRAWAL}
         return initial
-
     def form_valid(self, form):
         global total_balance
         amount = form.cleaned_data.get('amount')
         account = self.request.user.account
-
         if amount > total_balance:
             messages.error(
                 self.request,
                 'Unable to withdraw the requested amount. The bank is bankrupt.'
             )
             return self.form_invalid(form)
-
         account.balance -= amount
         total_balance -=amount
         account.save(update_fields=['balance'])
-
         messages.success(
             self.request,
             f'Successfully withdrawn {"{:,.2f}".format(float(amount))}$ from your account'
@@ -124,17 +119,21 @@ class TransferMoney(TransactionCreateMixin):
         account.save(update_fields=['balance'])
 
         receiver = form.cleaned_data.get('receiver')
-        receiver_account = receiver.user
 
-        if receiver_account:
+        if receiver:  # Ensure the receiver account exists
             receiver.balance += amount
             receiver.save(update_fields=['balance'])
+
+            # Send email to the receiver
+            send_transaction_email(receiver.user, amount, "Transfer Received", "transactions/transfer_received_email.html")
 
             messages.success(
                 self.request,
                 f'Successfully transferred {"{:,.2f}".format(float(amount))}$ to {receiver.user.username}'
             )
-            send_transaction_email(self.request.user, amount, "Transfer Message", "transactions/transfer_email.html")
+
+            # Send email to the sender
+            send_transaction_email(self.request.user, amount, "Transfer Sent", "transactions/transfer_email.html")
         else:
             messages.error(
                 self.request,
@@ -142,6 +141,7 @@ class TransferMoney(TransactionCreateMixin):
             )
 
         return super().form_valid(form)
+
 
     
 class LoanRequestView(TransactionCreateMixin):
@@ -190,7 +190,6 @@ class TransactionReportView(LoginRequiredMixin, ListView):
             ).aggregate(Sum('amount'))['amount__sum']
         else:
             self.balance = self.request.user.account.balance
-       
         return queryset.distinct()
     
     def get_context_data(self, **kwargs):
@@ -224,7 +223,6 @@ class PayLoanView(LoginRequiredMixin, View):
                 )
 
         return redirect('loan_list')
-
 
 class LoanListView(LoginRequiredMixin, ListView):
     model = Transaction
